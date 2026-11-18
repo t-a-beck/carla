@@ -50,6 +50,7 @@ namespace ros2 {
     AutowareGnssSensor,
     SceneCaptureCamera_RayTracedLensDistance,
     SceneCaptureCamera_RayTracedLensInstance,
+    CueSimLampPassSensor,
     SensorTypeCount
   };
 

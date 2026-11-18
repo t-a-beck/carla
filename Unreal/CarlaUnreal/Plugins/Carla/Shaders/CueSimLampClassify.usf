@@ -1,0 +1,136 @@
+// Copyright (c) 2026 Computer Vision Center (CVC) at the Universitat Autonoma
+// de Barcelona (UAB).
+//
+// This work is licensed under the terms of the MIT license.
+// For a copy, see <https://opensource.org/licenses/MIT>.
+
+// Compares each nearest lamp fragment with the view's final opaque depth and
+// appends one 12-word record per lamp pixel (CueSimLampPass.cpp).
+
+#include "/Engine/Private/Common.ush"
+#include "/Plugin/Carla/CueSimLampCommon.ush"
+
+struct FCueSimLampBox
+{
+	float4 Row0;
+	float4 Row1;
+	float4 Row2;
+	float4 ExtentId;  // xyz half extent (cm), w actor id bits
+};
+
+Texture2D<uint4> CueSimLampIds;
+Texture2D<float4> CueSimLampEmissive;
+Texture2D<float4> CueSimLampLocal;
+Texture2D<float> CueSimSceneDepth;
+StructuredBuffer<FCueSimLampBox> CueSimBoxes;
+uint CueSimNumBoxes;
+int2 CueSimViewMin;
+int2 CueSimViewSize;
+float CueSimDepthToleranceCm;
+float CueSimDepthToleranceRelative;
+float CueSimEmittingThreshold;
+uint CueSimMaxRecords;
+RWStructuredBuffer<uint> CueSimRecords;
+RWStructuredBuffer<uint> CueSimCounter;
+
+[numthreads(8, 8, 1)]
+void MainCS(uint2 Id : SV_DispatchThreadID)
+{
+	if (Id.x == 0u && Id.y == 0u)
+	{
+		// The rectangle the renderer actually used, checked on the CPU.
+		CueSimCounter[1] = uint(View.ViewRectMin.x);
+		CueSimCounter[2] = uint(View.ViewRectMin.y);
+		CueSimCounter[3] = uint(View.ViewSizeAndInvSize.x);
+		CueSimCounter[4] = uint(View.ViewSizeAndInvSize.y);
+	}
+	if (any(Id >= uint2(CueSimViewSize)))
+		return;
+	const int2 Pixel = CueSimViewMin + int2(Id);
+	const uint4 Ids = CueSimLampIds[Pixel];
+	if (Ids.w == 0u)
+		return;
+
+	const float LampDeviceZ = asfloat(Ids.z);
+	const float SceneDeviceZ = CueSimSceneDepth[Pixel];
+	const float LampDepth = ConvertFromDeviceZ(LampDeviceZ);
+	const float SceneDepth = ConvertFromDeviceZ(SceneDeviceZ);
+	const float Tolerance = CueSimDepthToleranceCm + CueSimDepthToleranceRelative * LampDepth;
+	uint Flags = (Ids.y >> 8) & 0xffu;
+	const uint Cell = Ids.y & 0xfu;
+
+	uint Visibility = CUESIM_VISIBLE;
+	uint Occluder = 0u;
+	if (LampDepth > SceneDepth + Tolerance)
+	{
+		// Attribute the opaque depth winner to the actor boxes containing it.
+		const float4 P = float4(SvPositionToTranslatedWorld(float4(float2(Pixel) + 0.5, SceneDeviceZ, 1)), 1);
+		bool Own = false;
+		uint Others = 0u;
+		uint Other = 0u;
+		for (uint Index = 0u; Index < CueSimNumBoxes; ++Index)
+		{
+			const FCueSimLampBox Box = CueSimBoxes[Index];
+			const float3 L = float3(dot(Box.Row0, P), dot(Box.Row1, P), dot(Box.Row2, P));
+			if (all(abs(L) <= Box.ExtentId.xyz))
+			{
+				const uint Actor = asuint(Box.ExtentId.w);
+				if (Actor == Ids.x)
+					Own = true;
+				else
+				{
+					++Others;
+					Other = Actor;
+				}
+			}
+		}
+		if (Own && Others > 0u)
+			Visibility = CUESIM_UNRESOLVED;
+		else if (Own)
+		{
+			Visibility = CUESIM_SELF_BLOCKED;
+			Occluder = Ids.x;
+		}
+		else
+		{
+			// No box: static world geometry (occluder 0).
+			Visibility = CUESIM_OTHER_BLOCKED;
+			Occluder = Others == 1u ? Other : 0u;
+			if (Others > 1u)
+			{
+				Flags |= CUESIM_FLAG_OCCLUDER_AMBIGUOUS;
+				Occluder = 0xffffffffu;
+			}
+		}
+	}
+
+	float3 Emissive = CueSimLampEmissive[Pixel].rgb;
+	if (any((asuint(Emissive) & 0x7f800000u) == 0x7f800000u))
+	{
+		Flags |= CUESIM_FLAG_NONFINITE_EMISSIVE;
+		Emissive = 0;
+	}
+	else if (Visibility == CUESIM_VISIBLE && max3(Emissive.r, Emissive.g, Emissive.b) > CueSimEmittingThreshold)
+	{
+		Flags |= CUESIM_FLAG_EMITTING;
+	}
+	const float3 Local = CueSimLampLocal[Pixel].xyz;
+
+	uint Slot;
+	InterlockedAdd(CueSimCounter[0], 1u, Slot);
+	if (Slot >= CueSimMaxRecords)
+		return;
+	const uint Base = Slot * 12u;
+	CueSimRecords[Base + 0u] = Id.y * uint(CueSimViewSize.x) + Id.x;
+	CueSimRecords[Base + 1u] = Ids.x;
+	CueSimRecords[Base + 2u] = Cell | (Visibility << 4) | (Flags << 8);
+	CueSimRecords[Base + 3u] = Occluder;
+	CueSimRecords[Base + 4u] = asuint(LampDepth);
+	CueSimRecords[Base + 5u] = asuint(SceneDepth);
+	CueSimRecords[Base + 6u] = asuint(Local.x);
+	CueSimRecords[Base + 7u] = asuint(Local.y);
+	CueSimRecords[Base + 8u] = asuint(Local.z);
+	CueSimRecords[Base + 9u] = asuint(Emissive.r);
+	CueSimRecords[Base + 10u] = asuint(Emissive.g);
+	CueSimRecords[Base + 11u] = asuint(Emissive.b);
+}

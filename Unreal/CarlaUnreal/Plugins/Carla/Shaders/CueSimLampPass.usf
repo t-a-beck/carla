@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Computer Vision Center (CVC) at the Universitat Autonoma
+// de Barcelona (UAB).
+//
+// This work is licensed under the terms of the MIT license.
+// For a copy, see <https://opensource.org/licenses/MIT>.
+
+// Lamp mesh pass: evaluates the lamp's own material at its nearest fragment in
+// the RGB camera's view, after that view's base pass. Writes only auxiliary
+// targets (CueSimLampPass.cpp); scene colour and depth are never bound.
+
+#include "/Engine/Private/Common.ush"
+#include "/Engine/Generated/Material.ush"
+#include "/Engine/Generated/VertexFactory.ush"
+#include "/Plugin/Carla/CueSimLampCommon.ush"
+
+struct FCueSimLampVSToPS
+{
+	FVertexFactoryInterpolantsVSToPS FactoryInterpolants;
+	float4 Position : SV_POSITION;
+};
+
+#if VERTEXSHADER
+
+// The base pass vertex path, so the fragment depth equals the base pass depth.
+void VSMain(FVertexFactoryInput Input, out FCueSimLampVSToPS Output)
+{
+	ResolvedView = ResolveView();
+	FVertexFactoryIntermediates VFIntermediates = GetVertexFactoryIntermediates(Input);
+	float4 WorldPosition = VertexFactoryGetWorldPosition(Input, VFIntermediates);
+	half3x3 TangentToLocal = VertexFactoryGetTangentToLocal(Input, VFIntermediates);
+	FMaterialVertexParameters VertexParameters =
+		GetMaterialVertexParameters(Input, VFIntermediates, WorldPosition.xyz, TangentToLocal);
+	Output.FactoryInterpolants = VertexFactoryGetInterpolantsVSToPS(Input, VFIntermediates, VertexParameters);
+	WorldPosition.xyz += GetMaterialWorldPositionOffset(VertexParameters);
+	ApplyMaterialFirstPersonTransform(VertexParameters, WorldPosition.xyz);
+	float4 RasterizedWorldPosition = VertexFactoryGetRasterizedWorldPosition(Input, VFIntermediates, WorldPosition);
+	Output.Position = mul(RasterizedWorldPosition, ResolvedView.TranslatedWorldToClip);
+}
+
+#elif PIXELSHADER
+
+uint CueSimActorId;
+float4 CueSimToLocal0;
+float4 CueSimToLocal1;
+float4 CueSimToLocal2;
+Texture2D CueSimMaskTexture;
+SamplerState CueSimMaskSampler;
+
+void PSMain(
+	FCueSimLampVSToPS Interpolants
+	OPTIONAL_IsFrontFace,
+	out uint4 OutIds : SV_Target0,
+	out float4 OutEmissive : SV_Target1,
+	out float4 OutLocal : SV_Target2)
+{
+	ResolvedView = ResolveView();
+	float4 SvPosition = Interpolants.Position;
+	FMaterialPixelParameters MaterialParameters =
+		GetMaterialPixelParameters(Interpolants.FactoryInterpolants, SvPosition);
+	FPixelMaterialInputs PixelMaterialInputs;
+	CalcMaterialParameters(MaterialParameters, PixelMaterialInputs, SvPosition, bIsFrontFace);
+	GetMaterialCoverageAndClipping(MaterialParameters, PixelMaterialInputs);
+
+	uint Flags = 0u;
+	uint Cell = 0u;
+#if NUM_TEX_COORD_INTERPOLATORS > 0
+	// The atlas is authored on UV0, which the lamp material samples.
+	Cell = CueSimMaskCell(CueSimMaskTexture.SampleLevel(CueSimMaskSampler, MaterialParameters.TexCoords[0], 0));
+#else
+	Flags |= CUESIM_FLAG_NO_TEXCOORD;
+#endif
+
+	// Material emissive output before the view's pre-exposure is applied.
+	const float3 Emissive = PixelMaterialInputs.EmissiveColor;
+	const float4 Translated = float4(MaterialParameters.WorldPosition_CamRelative, 1);
+	OutIds = uint4(CueSimActorId, Cell | (Flags << 8), asuint(SvPosition.z), 1u);
+	OutEmissive = float4(Emissive, 1);
+	OutLocal = float4(dot(CueSimToLocal0, Translated), dot(CueSimToLocal1, Translated), dot(CueSimToLocal2, Translated), 1);
+}
+
+#endif

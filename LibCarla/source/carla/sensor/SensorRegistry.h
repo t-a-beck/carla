@@ -65,6 +65,7 @@ class AV2XSensor;
 class ACustomV2XSensor;
 class AVehicleStatusSensor; // Autoware
 class AAutowareGnssSensor; // Autoware
+class ACueSimLampPassSensor;
 
 namespace carla {
 namespace sensor {
@@ -111,7 +112,10 @@ namespace sensor {
     std::pair<ASceneCaptureCamera_RayTracedLensDistance *, s11n::DistanceImageSerializer>,
     // Tag AOV: the byte layout is the one sensor.camera.instance_segmentation already
     // uses (R = label, G/B = 16-bit actor id), so it ships as a plain image.
-    std::pair<ASceneCaptureCamera_RayTracedLensInstance *, s11n::ImageSerializer>
+    std::pair<ASceneCaptureCamera_RayTracedLensInstance *, s11n::ImageSerializer>,
+    // CueSim same-view lamp pass: a versioned binary packet carried as the raw
+    // bytes of a plain image (width x height BGRA texels, see the sensor).
+    std::pair<ACueSimLampPassSensor *, s11n::ImageSerializer>
   >;
 
 } // namespace sensor
@@ -151,5 +155,6 @@ namespace sensor {
 #include "Carla/Sensor/CustomV2XSensor.h"
 #include "Carla/Autoware/Sensors/VehicleStatusSensor.h" // Autoware
 #include "Carla/Autoware/Sensors/AutowareGnssSensor.h" // Autoware
+#include "Carla/Sensor/CueSimLampPassSensor.h"
 
 #endif // LIBCARLA_SENSOR_REGISTRY_WITH_SENSOR_INCLUDES

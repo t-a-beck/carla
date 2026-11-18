@@ -56,6 +56,7 @@ CARLA_CHECK_ROS2_SENSOR_TYPE(AVehicleStatusSensor, VehicleStatusSensor);
 CARLA_CHECK_ROS2_SENSOR_TYPE(AAutowareGnssSensor, AutowareGnssSensor);
 CARLA_CHECK_ROS2_SENSOR_TYPE(ASceneCaptureCamera_RayTracedLensDistance, SceneCaptureCamera_RayTracedLensDistance);
 CARLA_CHECK_ROS2_SENSOR_TYPE(ASceneCaptureCamera_RayTracedLensInstance, SceneCaptureCamera_RayTracedLensInstance);
+CARLA_CHECK_ROS2_SENSOR_TYPE(ACueSimLampPassSensor, CueSimLampPassSensor);
 static_assert(carla::sensor::SensorRegistry::size() == carla::ros2::ESensors::SensorTypeCount,
     "carla::ros2::ESensors needs one entry per SensorRegistry item");
 #undef CARLA_CHECK_ROS2_SENSOR_TYPE

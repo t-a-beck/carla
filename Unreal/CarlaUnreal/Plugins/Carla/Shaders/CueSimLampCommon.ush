@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Computer Vision Center (CVC) at the Universitat Autonoma
+// de Barcelona (UAB).
+//
+// This work is licensed under the terms of the MIT license.
+// For a copy, see <https://opensource.org/licenses/MIT>.
+
+// Shared definitions of the CueSim lamp pass (CueSimLampPass.cpp).
+#pragma once
+
+#define CUESIM_FLAG_EMITTING           1u
+#define CUESIM_FLAG_NONFINITE_EMISSIVE 2u
+#define CUESIM_FLAG_NO_TEXCOORD        4u
+#define CUESIM_FLAG_OCCLUDER_AMBIGUOUS 8u
+
+#define CUESIM_VISIBLE       1u
+#define CUESIM_OTHER_BLOCKED 2u
+#define CUESIM_SELF_BLOCKED  3u
+#define CUESIM_UNRESOLVED    4u
+
+// 0 below 0.25, 1 above 0.75, 2 in between (cell edge or filtering).
+uint CueSimLevel(float Value)
+{
+	return Value >= 0.75 ? 1u : (Value <= 0.25 ? 0u : 2u);
+}
+
+// Cell of CARLA's vehicle light mask atlas (Docs/content_authoring_vehicles.md):
+// 1 low beam (black), 2 high beam (blue), 3/4 front/rear position (white,
+// alpha 0/1), 5/6 front/rear fog (cyan, alpha 0/1), 7 brake (yellow),
+// 8 reverse (green), 9 left blinker (red), 10 right blinker (magenta).
+// 0: no exact cell interior, which never attributes a function.
+uint CueSimMaskCell(float4 Mask)
+{
+	const uint R = CueSimLevel(Mask.r);
+	const uint G = CueSimLevel(Mask.g);
+	const uint B = CueSimLevel(Mask.b);
+	const uint A = CueSimLevel(Mask.a);
+	if (R == 2u || G == 2u || B == 2u)
+		return 0u;
+	const uint Rgb = R * 4u + G * 2u + B;
+	if (Rgb == 0u) return 1u;
+	if (Rgb == 1u) return 2u;
+	if (Rgb == 7u) return A == 0u ? 3u : (A == 1u ? 4u : 0u);
+	if (Rgb == 3u) return A == 0u ? 5u : (A == 1u ? 6u : 0u);
+	if (Rgb == 6u) return 7u;
+	if (Rgb == 2u) return 8u;
+	if (Rgb == 4u) return 9u;
+	return 10u;  // Rgb == 5u, magenta
+}
