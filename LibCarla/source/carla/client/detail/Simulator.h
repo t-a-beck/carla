@@ -701,6 +701,14 @@ namespace detail {
       _client.SetLightStateToVehicle(vehicle.GetId(), light_state);
     }
 
+    void SetVehicleLampSchedule(Vehicle &vehicle, const std::string &payload) {
+      _client.SetVehicleLampSchedule(vehicle.GetId(), payload);
+    }
+
+    std::string TakeVehicleLampLog(Vehicle &vehicle) {
+      return _client.TakeVehicleLampLog(vehicle.GetId());
+    }
+
     void OpenVehicleDoor(Vehicle &vehicle, const rpc::VehicleDoor door_idx) {
       _client.OpenVehicleDoor(vehicle.GetId(), door_idx);
     }

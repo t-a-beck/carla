@@ -14,6 +14,7 @@
 #include "Carla/Util/NavigationMesh.h"
 #include "Carla/Util/RayTracer.h"
 #include "Carla/Vehicle/CarlaWheeledVehicle.h"
+#include "Carla/CueSim/CueSimLampSubsystem.h"
 #include "Carla/Sensor/CustomV2XSensor.h"
 #include "Carla/Sensor/SceneCaptureSensor.h"
 #include "Carla/Sensor/SceneCaptureSensor_WideAngleLens.h"
@@ -2327,6 +2328,54 @@ BIND_SYNC(is_sensor_enabled_for_ros) << [this](carla::streaming::detail::stream_
           " Actor Id: " + FString::FromInt(ActorId));
     }
     return R<void>::Success();
+  };
+
+
+  // CueSim lamp controller (off unless carla.CueSim.LampController=1).
+  BIND_SYNC(cuesim_set_lamp_schedule) << [this](
+      cr::ActorId ActorId,
+      std::string Payload) -> R<void>
+  {
+    REQUIRE_CARLA_EPISODE();
+    REQUIRE_PRIMARY_SERVER();
+    FCarlaActor* CarlaActor = Episode->FindCarlaActor(ActorId);
+    ACarlaWheeledVehicle* Vehicle = CarlaActor != nullptr
+        ? Cast<ACarlaWheeledVehicle>(CarlaActor->GetActor())
+        : nullptr;
+    if (Vehicle == nullptr)
+    {
+      return RespondError(
+          "cuesim_set_lamp_schedule",
+          ECarlaServerResponse::NotAVehicle,
+          " Actor Id: " + FString::FromInt(ActorId));
+    }
+    UCueSimLampSubsystem* Lamps = Episode->GetWorld()->GetSubsystem<UCueSimLampSubsystem>();
+    const FString Error = Lamps != nullptr
+        ? Lamps->SetSchedule(*Vehicle, ActorId, cr::ToLongFString(Payload))
+        : FString(TEXT("no lamp controller in this world"));
+    if (!Error.IsEmpty())
+    {
+      return RespondError("cuesim_set_lamp_schedule", Error, " Actor Id: " + FString::FromInt(ActorId));
+    }
+    return R<void>::Success();
+  };
+
+  BIND_SYNC(cuesim_take_lamp_log) << [this](
+      cr::ActorId ActorId) -> R<std::string>
+  {
+    REQUIRE_CARLA_EPISODE();
+    UCueSimLampSubsystem* Lamps = Episode->GetWorld()->GetSubsystem<UCueSimLampSubsystem>();
+    FString Rows;
+    FString Error = Lamps != nullptr ? FString() : FString(TEXT("no lamp controller in this world"));
+    if (Lamps != nullptr && !Lamps->TakeLog(ActorId, Rows, Error))
+    {
+      return RespondError("cuesim_take_lamp_log", Error, " Actor Id: " + FString::FromInt(ActorId));
+    }
+    if (!Error.IsEmpty())
+    {
+      return RespondError("cuesim_take_lamp_log", Error);
+    }
+    return cr::FromLongFString(Rows);
   };
 
 

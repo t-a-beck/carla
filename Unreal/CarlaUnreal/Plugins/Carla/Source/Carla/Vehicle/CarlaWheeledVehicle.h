@@ -217,6 +217,14 @@ public:
 
   void SetVehicleLightState(const FVehicleLightState &LightState);
 
+  /// CueSim lamp controller (UCueSimLampSubsystem): while controlled, the light state
+  /// is only recorded, and the Blueprint and Light Defaults paths are not invoked.
+  /// Taking control hands the Blueprint an all-off state; releasing restores the
+  /// recorded state through the stock path.
+  void SetCueSimLampControlled(bool bControlled);
+
+  bool IsCueSimLampControlled() const { return bCueSimLampControlled; }
+
   void SetFailureState(const carla::rpc::VehicleFailureState &FailureState);
 
   UFUNCTION(BlueprintNativeEvent)
@@ -599,6 +607,8 @@ private:
   float SavedVehicleLightIntensity = 1.0f;
   TMap<FString, float> SavedVehicleLightGroupIntensity;
   void ApplyVehicleLightDefaultsForCurrentState();
+
+  bool bCueSimLampControlled = false;
 
   // Resolved once (BeginPlay) rather than looked up by name every tick.
   // bRiderComponentsResolved distinguishes "looked up, none found" (a

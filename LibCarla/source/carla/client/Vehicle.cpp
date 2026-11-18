@@ -96,6 +96,14 @@ namespace client {
     GetEpisode().Lock()->SetLightStateToVehicle(*this, rpc::VehicleLightState(light_state));
   }
 
+  void Vehicle::SetLampSchedule(const std::string &payload) {
+    GetEpisode().Lock()->SetVehicleLampSchedule(*this, payload);
+  }
+
+  std::string Vehicle::TakeLampLog() {
+    return GetEpisode().Lock()->TakeVehicleLampLog(*this);
+  }
+
   void Vehicle::SetWheelSteerDirection(WheelLocation wheel_location, float angle_in_deg) {
     GetEpisode().Lock()->SetWheelSteerDirection(*this, wheel_location, angle_in_deg);
   }

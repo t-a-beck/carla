@@ -85,6 +85,14 @@ namespace client {
     /// Sets a @a LightState to this vehicle.
     void SetLightState(const LightState &light_state);
 
+    /// CueSim lamp controller: applies a `cuesim-lamp-schedule-v1` JSON payload, so the
+    /// server owns this vehicle's lamp timeline; an empty payload releases it. Requires
+    /// a server started with carla.CueSim.LampController=1.
+    void SetLampSchedule(const std::string &payload);
+
+    /// CueSim lamp controller: the per-tick log since the previous call, as JSON lines.
+    std::string TakeLampLog();
+
     /// Sets a @a Rotation to a wheel of the vehicle (affects the bone of the car skeleton, not the physics)
     void SetWheelSteerDirection(WheelLocation wheel_location, float angle_in_deg);
 

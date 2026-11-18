@@ -229,6 +229,10 @@ namespace detail {
         rpc::ActorId vehicle,
         const rpc::VehicleLightState &light_state);
 
+    void SetVehicleLampSchedule(rpc::ActorId vehicle, const std::string &payload);
+
+    std::string TakeVehicleLampLog(rpc::ActorId vehicle);
+
     void OpenVehicleDoor(
         rpc::ActorId vehicle,
         const rpc::VehicleDoor door_idx);

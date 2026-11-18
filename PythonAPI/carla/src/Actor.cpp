@@ -199,6 +199,8 @@ void export_actor() {
       .def("apply_ackermann_control", &cc::Vehicle::ApplyAckermannControl, (arg("control")))
       .def("get_control", &cc::Vehicle::GetControl)
       .def("set_light_state", &cc::Vehicle::SetLightState, (arg("light_state")))
+      .def("set_lamp_schedule", &cc::Vehicle::SetLampSchedule, (arg("payload")))
+      .def("take_lamp_log", &cc::Vehicle::TakeLampLog)
       .def("open_door", &cc::Vehicle::OpenDoor, (arg("door_idx")))
       .def("close_door", &cc::Vehicle::CloseDoor, (arg("door_idx")))
       .def("is_door_open", &cc::Vehicle::IsDoorOpen, (arg("door_idx")))

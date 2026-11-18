@@ -1242,6 +1242,10 @@ void ACarlaWheeledVehicle::SetVehicleLightState(const FVehicleLightState& LightS
     LightState.Special2 != InputControl.LightState.Special2)
   {
     InputControl.LightState = LightState;
+    if (bCueSimLampControlled)
+    {
+      return;
+    }
     // The blueprint reads its per-group intensity variables (already scaled
     // once at spawn in ActivateVehicleLightComponents) and re-pushes them
     // from a looping timer, so no per-call component rescale is needed here
@@ -1250,6 +1254,20 @@ void ACarlaWheeledVehicle::SetVehicleLightState(const FVehicleLightState& LightS
     // RefreshLightState's own graph is opaque to C++ and may repush its own
     // (weak, authored) emissive values for whichever groups just toggled --
     // reapply the Light Defaults saved values after it so ours win.
+    ApplyVehicleLightDefaultsForCurrentState();
+  }
+}
+
+void ACarlaWheeledVehicle::SetCueSimLampControlled(bool bControlled)
+{
+  if (bControlled == bCueSimLampControlled)
+  {
+    return;
+  }
+  bCueSimLampControlled = bControlled;
+  RefreshLightState(bControlled ? FVehicleLightState() : InputControl.LightState);
+  if (!bControlled)
+  {
     ApplyVehicleLightDefaultsForCurrentState();
   }
 }

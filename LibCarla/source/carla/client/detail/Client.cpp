@@ -403,6 +403,14 @@ namespace detail {
     return _pimpl->AsyncCall("set_vehicle_light_state", vehicle, light_state);
   }
 
+  void Client::SetVehicleLampSchedule(rpc::ActorId vehicle, const std::string &payload) {
+    _pimpl->CallAndWait<void>("cuesim_set_lamp_schedule", vehicle, payload);
+  }
+
+  std::string Client::TakeVehicleLampLog(rpc::ActorId vehicle) {
+    return _pimpl->CallAndWait<std::string>("cuesim_take_lamp_log", vehicle);
+  }
+
   void Client::OpenVehicleDoor(
       rpc::ActorId vehicle,
       const rpc::VehicleDoor door_idx) {
