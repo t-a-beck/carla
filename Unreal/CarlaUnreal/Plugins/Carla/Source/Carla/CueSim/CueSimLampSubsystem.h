@@ -61,6 +61,8 @@ private:
 
   static constexpr int32 FunctionCount = 8;
 
+  static constexpr int32 CombinedCount = 2;
+
   struct FControlled
   {
     TWeakObjectPtr<ACarlaWheeledVehicle> Vehicle;
@@ -69,7 +71,9 @@ private:
     CueSimLamp::FFunction Functions[FunctionCount];
     double MaterialIntensity = 0.0;
     TArray<TWeakObjectPtr<UMaterialInstanceDynamic>> Materials;
-    bool bParameterFound[FunctionCount] = {};
+    bool bCombined = false;
+    CueSimLamp::FFunction CombinedFunctions[CombinedCount];
+    TArray<TWeakObjectPtr<UMaterialInstanceDynamic>> CombinedMaterials[CombinedCount];
     TArray<TWeakObjectPtr<ULightComponent>> Lights[FunctionCount];
     TArray<float> LightBaseIntensity[FunctionCount];
   };

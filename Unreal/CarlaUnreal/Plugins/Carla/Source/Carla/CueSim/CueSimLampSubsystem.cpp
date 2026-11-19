@@ -68,6 +68,11 @@ namespace
       {TEXT("right_indicator"), TEXT("Right Blinker")},
   };
 
+  constexpr int32 BrakeIndex = 4;
+  constexpr int32 FirstIndicatorIndex = 6;
+  const TCHAR *const CombinedKeys[] = {TEXT("brake_left"), TEXT("brake_right")};
+  const TCHAR *const SlotSuffixes[] = {TEXT("_StopTurn_L"), TEXT("_StopTurn_R")};
+
   // Mirrors ComponentNameMatchesGroup in LightDefaultsJsonUtils.cpp, plus the
   // "Carla.Light.<Group>" tags ApplyVehicleLightDefaultsForCurrentState honours.
   bool LightBelongsTo(const ULightComponent &Light, const FString &Group)
@@ -303,7 +308,7 @@ FString UCueSimLampSubsystem::SetSchedule(
   FString Error;
   FControlled Entry;
   if (!CheckKeys(*Root, {TEXT("schema"), TEXT("schedule_id"), TEXT("exposure"),
-          TEXT("material_intensity"), TEXT("functions")}, TEXT("schedule"), Error))
+          TEXT("material_intensity"), TEXT("functions"), TEXT("wiring")}, TEXT("schedule"), Error))
   {
     return Error;
   }
@@ -315,6 +320,16 @@ FString UCueSimLampSubsystem::SetSchedule(
   if (!Root->TryGetStringField(TEXT("schedule_id"), Entry.ScheduleId) || Entry.ScheduleId.Len() != 64)
   {
     return TEXT("schedule_id must be a SHA256 hex digest");
+  }
+  if (Root->HasField(TEXT("wiring")))
+  {
+    FString Wiring;
+    if (!Root->TryGetStringField(TEXT("wiring"), Wiring) ||
+        (Wiring != TEXT("separate") && Wiring != TEXT("combined_stop_turn")))
+    {
+      return TEXT("wiring must be separate or combined_stop_turn");
+    }
+    Entry.bCombined = Wiring == TEXT("combined_stop_turn");
   }
   const TSharedPtr<FJsonObject> *Exposure = nullptr;
   if (!Root->TryGetObjectField(TEXT("exposure"), Exposure) ||
@@ -377,27 +392,59 @@ FString UCueSimLampSubsystem::SetSchedule(
   Entry.Vehicle = &Vehicle;
   TArray<UStaticMeshComponent *> Meshes;
   Vehicle.GetComponents<UStaticMeshComponent>(Meshes);
+  struct FSlot
+  {
+    UStaticMeshComponent *Mesh;
+    int32 Index;
+    int32 Side;
+  };
+  TArray<FSlot> Slots;
+  bool bFoundSide[CombinedCount] = {};
   for (UStaticMeshComponent *Mesh : Meshes)
   {
+    const TArray<FName> Names = Mesh->GetMaterialSlotNames();
     for (int32 Slot = 0; Slot < Mesh->GetNumMaterials(); ++Slot)
     {
-      if (IsVehicleLightsMaterial(Mesh->GetMaterial(Slot)))
+      if (!IsVehicleLightsMaterial(Mesh->GetMaterial(Slot)))
       {
-        Entry.Materials.Add(Mesh->CreateAndSetMaterialInstanceDynamic(Slot));
+        continue;
       }
+      int32 Side = INDEX_NONE;
+      if (Entry.bCombined && Names.IsValidIndex(Slot))
+      {
+        for (int32 Candidate = 0; Candidate < CombinedCount; ++Candidate)
+        {
+          if (Names[Slot].ToString().EndsWith(SlotSuffixes[Candidate]))
+          {
+            Side = Candidate;
+            bFoundSide[Candidate] = true;
+          }
+        }
+      }
+      Slots.Add({Mesh, Slot, Side});
     }
   }
-  if (Entry.Materials.IsEmpty())
+  if (Slots.IsEmpty())
   {
     return TEXT("the vehicle has no M_VehicleLightsMaster material slot");
   }
-  for (int32 Index = 0; Index < FunctionCount; ++Index)
+  if (Entry.bCombined)
   {
-    float Default = 0.0f;
-    UMaterialInstanceDynamic *First = Entry.Materials[0].Get();
-    Entry.bParameterFound[Index] = First != nullptr && First->Parent != nullptr &&
-        First->Parent->GetScalarParameterDefaultValue(
-            FHashedMaterialParameterInfo(FName(FunctionNames[Index].Group)), Default);
+    for (int32 Side = 0; Side < CombinedCount; ++Side)
+    {
+      if (!bFoundSide[Side])
+      {
+        return FString::Printf(TEXT("combined_stop_turn requires a lamp material slot ending in %s"),
+            SlotSuffixes[Side]);
+      }
+      Entry.CombinedFunctions[Side] = CueSimLamp::Combined(
+          Entry.Functions[BrakeIndex], Entry.Functions[FirstIndicatorIndex + Side]);
+    }
+  }
+  for (const FSlot &Slot : Slots)
+  {
+    auto &Materials = Slot.Side == INDEX_NONE ? Entry.Materials : Entry.CombinedMaterials[Slot.Side];
+    Materials.Add(Slot.Mesh->CreateAndSetMaterialInstanceDynamic(Slot.Index));
   }
   TArray<ULightComponent *> Lights;
   Vehicle.GetComponents<ULightComponent>(Lights);
@@ -533,36 +580,63 @@ void UCueSimLampSubsystem::Apply(
     uint32 ActorId, FControlled &Entry, uint64 Frame, double SimTime, float VisualTime)
 {
   TArray<FString> &Rows = Logs.FindOrAdd(ActorId);
-  for (int32 Index = 0; Index < FunctionCount; ++Index)
+  const int32 RowCount = FunctionCount + (Entry.bCombined ? CombinedCount : 0);
+  for (int32 Index = 0; Index < RowCount; ++Index)
   {
-    const CueSimLamp::FFunction &Function = Entry.Functions[Index];
+    const bool bCombined = Index >= FunctionCount;
+    const int32 Side = Index - FunctionCount;
+    const CueSimLamp::FFunction &Function = bCombined ? Entry.CombinedFunctions[Side] : Entry.Functions[Index];
     const CueSimLamp::FSample Sample = CueSimLamp::Evaluate(Function, Entry.Exposure, SimTime);
-    const FName Parameter(FunctionNames[Index].Group);
     const float Written =
         static_cast<float>(Entry.MaterialIntensity * Function.Level * Sample.ExposureFraction);
 
     int32 Slots = 0;
+    bool bFound = true;
     bool bAgree = true;
     float Readback = std::numeric_limits<float>::quiet_NaN();
-    for (const TWeakObjectPtr<UMaterialInstanceDynamic> &Weak : Entry.Materials)
+    const auto Write = [&](const auto &Materials, int32 ParameterIndex)
     {
-      UMaterialInstanceDynamic *Material = Weak.Get();
-      if (Material == nullptr)
+      const FName Parameter(FunctionNames[ParameterIndex].Group);
+      const FHashedMaterialParameterInfo Info(Parameter);
+      for (const auto &Weak : Materials)
       {
-        bAgree = false;
-        continue;
+        UMaterialInstanceDynamic *Material = Weak.Get();
+        if (Material == nullptr)
+        {
+          bAgree = false;
+          continue;
+        }
+        float Default = 0.0f;
+        bFound &= Material->Parent != nullptr &&
+            Material->Parent->GetScalarParameterDefaultValue(Info, Default);
+        Material->SetScalarParameterValue(Parameter, Written);
+        float Value = std::numeric_limits<float>::quiet_NaN();
+        const bool bRead = Material->GetScalarParameterValue(Info, Value, /*bOveriddenOnly=*/true);
+        bAgree &= bRead && Value == Written;
+        Readback = Slots == 0 ? Value : Readback;
+        ++Slots;
       }
-      Material->SetScalarParameterValue(Parameter, Written);
-      float Value = std::numeric_limits<float>::quiet_NaN();
-      const bool bRead = Material->GetScalarParameterValue(
-          FHashedMaterialParameterInfo(Parameter), Value, /*bOveriddenOnly=*/true);
-      bAgree &= bRead && Value == Written;
-      Readback = Slots == 0 ? Value : Readback;
-      ++Slots;
+    };
+    if (bCombined)
+    {
+      Write(Entry.CombinedMaterials[Side], BrakeIndex);
+      Write(Entry.CombinedMaterials[Side], FirstIndicatorIndex + Side);
+    }
+    else
+    {
+      Write(Entry.Materials, Index);
+      for (int32 OtherSide = 0; OtherSide < CombinedCount; ++OtherSide)
+      {
+        if (Index != BrakeIndex && Index != FirstIndicatorIndex + OtherSide)
+        {
+          Write(Entry.CombinedMaterials[OtherSide], Index);
+        }
+      }
     }
 
     float LightIntensity = 0.0f;
-    for (int32 Light = 0; Light < Entry.Lights[Index].Num(); ++Light)
+    const int32 LightCount = bCombined ? 0 : Entry.Lights[Index].Num();
+    for (int32 Light = 0; Light < LightCount; ++Light)
     {
       ULightComponent *Component = Entry.Lights[Index][Light].Get();
       if (Component == nullptr)
@@ -588,11 +662,11 @@ void UCueSimLampSubsystem::Apply(
         TEXT("\"slots\":%d,\"slots_agree\":%s,\"lights\":%d,\"light_intensity\":%s,")
         TEXT("\"visual_time\":%s}\n"),
         static_cast<unsigned long long>(Frame), *Number(SimTime), ActorId, *Entry.ScheduleId,
-        FunctionNames[Index].Key, Sample.bElectrical ? TEXT("true") : TEXT("false"),
+        bCombined ? CombinedKeys[Side] : FunctionNames[Index].Key, Sample.bElectrical ? TEXT("true") : TEXT("false"),
         *Number(Sample.LevelAtCentre), *Number(Sample.ExposureFraction),
         *Number(Entry.MaterialIntensity), *Number(Written), *Number(Readback),
-        Entry.bParameterFound[Index] ? TEXT("true") : TEXT("false"), Slots,
-        bAgree ? TEXT("true") : TEXT("false"), Entry.Lights[Index].Num(),
+        bFound && Slots > 0 ? TEXT("true") : TEXT("false"), Slots,
+        bAgree ? TEXT("true") : TEXT("false"), LightCount,
         *Number(LightIntensity), *Number(VisualTime)));
   }
 }

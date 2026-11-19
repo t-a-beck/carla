@@ -18,8 +18,10 @@
 
 #pragma once
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 #include <vector>
 
 // Each operation rounds on its own, as in Python: no fused multiply-add contraction.
@@ -55,6 +57,7 @@ namespace CueSimLamp
     double TauOff = 0.0;
     double Level = 1.0;
     std::vector<FInterval> Intervals;  // sorted, non-overlapping
+    std::vector<FInterval> OverrideIntervals;  // turn command takes precedence throughout
   };
 
   struct FExposure
@@ -82,11 +85,11 @@ namespace CueSimLamp
   }
 
   /// Rise and fall edges with time <= Until, in schedule order.
-  inline std::vector<FEdge> Edges(const FFunction &Function, double Until)
+  inline std::vector<FEdge> IntervalEdges(const std::vector<FInterval> &Intervals, double Until)
   {
     CUESIM_LAMP_EXACT
     std::vector<FEdge> Result;
-    for (const FInterval &Interval : Function.Intervals)
+    for (const FInterval &Interval : Intervals)
     {
       if (Interval.Start > Until)
       {
@@ -122,6 +125,64 @@ namespace CueSimLamp
       }
     }
     return Result;
+  }
+
+  inline FFunction Combined(const FFunction &Brake, const FFunction &Indicator)
+  {
+    return {std::max(Brake.TauOn, Indicator.TauOn), std::max(Brake.TauOff, Indicator.TauOff),
+        std::max(Brake.Level, Indicator.Level), Brake.Intervals, Indicator.Intervals};
+  }
+
+  inline std::vector<FEdge> Edges(const FFunction &Function, double Until)
+  {
+    std::vector<FEdge> Brake = IntervalEdges(Function.Intervals, Until);
+    if (Function.OverrideIntervals.empty())
+    {
+      return Brake;
+    }
+
+    // Three streams: brake drive, turn drive, and whether the turn command is active.
+    // Apply all transitions at the same instant before changing the shared lamp drive.
+    auto ActiveIntervals = Function.OverrideIntervals;
+    for (FInterval &Interval : ActiveIntervals)
+    {
+      Interval.bFlashing = false;
+    }
+    const std::vector<FEdge> Streams[] = {
+        std::move(Brake), IntervalEdges(Function.OverrideIntervals, Until),
+        IntervalEdges(ActiveIntervals, Until)};
+    std::size_t Next[3] = {};
+    bool State[3] = {};
+    bool bOn = false;
+    std::vector<FEdge> Result;
+    for (;;)
+    {
+      double Time = Forever;
+      for (std::size_t Stream = 0; Stream < 3; ++Stream)
+      {
+        if (Next[Stream] < Streams[Stream].size())
+        {
+          Time = std::min(Time, Streams[Stream][Next[Stream]].Time);
+        }
+      }
+      if (Time == Forever)
+      {
+        return Result;
+      }
+      for (std::size_t Stream = 0; Stream < 3; ++Stream)
+      {
+        while (Next[Stream] < Streams[Stream].size() && Streams[Stream][Next[Stream]].Time == Time)
+        {
+          State[Stream] = Streams[Stream][Next[Stream]++].bRise;
+        }
+      }
+      const bool bNext = State[2] ? State[1] : State[0];
+      if (bNext != bOn)
+      {
+        Result.push_back({Time, bNext});
+        bOn = bNext;
+      }
+    }
   }
 
   namespace Detail
