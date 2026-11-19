@@ -590,8 +590,10 @@ void UCueSimLampSubsystem::Apply(
     const float Written =
         static_cast<float>(Entry.MaterialIntensity * Function.Level * Sample.ExposureFraction);
 
+    // Vehicles mix lamp masters (sirens, per-lamp materials): a parameter counts as found when
+    // any lamp slot has it, and only those slots are written, read back and compared.
     int32 Slots = 0;
-    bool bFound = true;
+    bool bFound = false;
     bool bAgree = true;
     float Readback = std::numeric_limits<float>::quiet_NaN();
     const auto Write = [&](const auto &Materials, int32 ParameterIndex)
@@ -607,8 +609,12 @@ void UCueSimLampSubsystem::Apply(
           continue;
         }
         float Default = 0.0f;
-        bFound &= Material->Parent != nullptr &&
-            Material->Parent->GetScalarParameterDefaultValue(Info, Default);
+        if (Material->Parent == nullptr ||
+            !Material->Parent->GetScalarParameterDefaultValue(Info, Default))
+        {
+          continue;
+        }
+        bFound = true;
         Material->SetScalarParameterValue(Parameter, Written);
         float Value = std::numeric_limits<float>::quiet_NaN();
         const bool bRead = Material->GetScalarParameterValue(Info, Value, /*bOveriddenOnly=*/true);
